@@ -1,5 +1,7 @@
 import logging
-
+from datetime import datetime
+import json
+import os
 from dotenv import load_dotenv
 from livekit.agents import (
     Agent,
@@ -12,8 +14,8 @@ from livekit.agents import (
     cli,
     metrics,
     tokenize,
-    # function_tool,
-    # RunContext
+    function_tool,
+    RunContext
 )
 from livekit.plugins import murf, silero, google, deepgram, noise_cancellation
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
@@ -22,15 +24,56 @@ logger = logging.getLogger("agent")
 
 load_dotenv(".env.local")
 
+order_state = {
+    "drinkType": None,
+    "size": None,
+    "milk": None,
+    "extras": [],
+    "name": None,
+}
 
 class Assistant(Agent):
     def __init__(self) -> None:
-        super().__init__(
-            instructions="""You are a helpful voice AI assistant. The user is interacting with you via voice, even if you perceive the conversation as text.
-            You eagerly assist users with their questions by providing information from your extensive knowledge.
-            Your responses are concise, to the point, and without any complex formatting or punctuation including emojis, asterisks, or other symbols.
-            You are curious, friendly, and have a sense of humor.""",
+        super().__init__(instructions="""
+                You are a friendly coffee shop barista for Blue Tokai Coffee.
+
+                Your goal is to take a coffee order by filling the following JSON object:
+                {
+                "drinkType": "string",
+                "size": "string",
+                "milk": "string",
+                "extras": ["string"],
+                "name": "string"
+                }
+
+                Ask clarifying questions until ALL fields are filled.
+                Ask only one question at a time.
+
+                When all fields are filled, call the tool `save_order` with the full JSON object.
+                Then speak a friendly confirmation message summarizing the order loudly and clearly.
+                """,
         )
+
+    
+    @function_tool
+    async def update_order(self, context: RunContext, field: str, value: str):
+        """Update a specific field in the order."""
+        global order_state
+        if field == "extras":
+            order_state["extras"].append(value)
+        else:
+            order_state[field] = value
+        return "updated"
+
+    @function_tool
+    async def save_order(self, context: RunContext):
+        """Save the completed order to a JSON file."""
+        os.makedirs("orders", exist_ok=True)
+        filename = f"orders/order_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        with open(filename, "w") as f:
+            json.dump(order_state, f, indent=2)
+        return f"Order saved to {filename}"
+    
 
     # To add tools, use the @function_tool decorator.
     # Here's an example that adds a simple weather tool.

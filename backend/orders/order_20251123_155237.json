@@ -1,0 +1,9 @@
+{
+  "drinkType": "cold coffee",
+  "size": "large",
+  "milk": "whole milk",
+  "extras": [
+    "whipped cream"
+  ],
+  "name": "Nilesh"
+}

@@ -24,55 +24,80 @@ logger = logging.getLogger("agent")
 
 load_dotenv(".env.local")
 
-order_state = {
-    "drinkType": None,
-    "size": None,
-    "milk": None,
-    "extras": [],
-    "name": None,
+checkin_state = {
+    "mood": None,
+    "energy": None,
+    "goals": [],
 }
+
 
 class Assistant(Agent):
     def __init__(self) -> None:
         super().__init__(instructions="""
-                You are a friendly coffee shop barista for Blue Tokai Coffee.
+                    You are a supportive, grounded, and calm Health & Wellness voice companion.
+                    You talk to the user once per day for a short check-in.
+                    Avoid all medical advice, diagnosis, or therapy language.
 
-                Your goal is to take a coffee order by filling the following JSON object:
-                {
-                "drinkType": "string",
-                "size": "string",
-                "milk": "string",
-                "extras": ["string"],
-                "name": "string"
-                }
+                    Your job is to:
+                    1. Ask how they are feeling today and their energy level (1-10)
+                    2. Ask if anything is stressing them or affecting their mood.
+                    3. Ask for 1-3 goals or intentions for the day.
+                    4. Ask only one question at a time.
+                    5. When all information is collected, summarize concisely.
+                    6. Then call the tool `save_checkin` to permanently store the record.
 
-                Ask clarifying questions until ALL fields are filled.
-                Ask only one question at a time.
+                    You MUST reference previous check-ins when available.
+                    For example: “Last time you mentioned low energy. How is today compared to that?”
 
-                When all fields are filled, call the tool `save_order` with the full JSON object.
-                Then speak a friendly confirmation message summarizing the order loudly and clearly.
+                    Keep responses encouraging, realistic, grounded, and short.
+                    When all fields (mood, energy, goals) are collected, call the tool save_checkin with no additional text.
+                    Never end the conversation without calling save_checkin.
+
                 """,
         )
 
     
     @function_tool
-    async def update_order(self, context: RunContext, field: str, value: str):
-        """Update a specific field in the order."""
-        global order_state
-        if field == "extras":
-            order_state["extras"].append(value)
+    async def update_checkin(context: RunContext, field: str, value: str):
+        """Update part of today's check-in state."""
+        global checkin_state
+        if field == "goals":
+            checkin_state["goals"].append(value)
         else:
-            order_state[field] = value
+            checkin_state[field] = value
         return "updated"
 
+
     @function_tool
-    async def save_order(self, context: RunContext):
-        """Save the completed order to a JSON file."""
-        os.makedirs("orders", exist_ok=True)
-        filename = f"orders/order_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        with open(filename, "w") as f:
-            json.dump(order_state, f, indent=2)
-        return f"Order saved to {filename}"
+    async def save_checkin(context: RunContext):
+        """Save this check-in entry into wellness_log.json"""
+
+        global checkin_state
+        entry = {
+            "timestamp": datetime.now().isoformat(),
+            "mood": checkin_state["mood"],
+            "energy": checkin_state["energy"],
+            "goals": checkin_state["goals"],
+            "summary": f"Feeling {checkin_state['mood']} with energy {checkin_state['energy']} and goals {checkin_state['goals']}"
+        }
+
+        os.makedirs("wellness", exist_ok=True)
+        logfile = "wellness/wellness_log.json"
+        existing = []
+
+        if os.path.exists(logfile):
+            with open(logfile, "r") as f:
+                existing = json.load(f)
+
+        existing.append(entry)
+
+        with open(logfile, "w") as f:
+            json.dump(existing, f, indent=2)
+        
+        print("SAVE TOOL EXECUTED")
+
+        return "saved"
+
     
 
     # To add tools, use the @function_tool decorator.
@@ -98,6 +123,20 @@ def prewarm(proc: JobProcess):
 
 
 async def entrypoint(ctx: JobContext):
+    # Load previous logs
+    previous_entries = []
+    logfile = "wellness/wellness_log.json"
+    if os.path.exists(logfile):
+        with open(logfile, "r") as f:
+            previous_entries = json.load(f)
+
+    if len(previous_entries) > 0:
+        last = previous_entries[-1]
+        hint = f"Last time we talked, you described feeling {last['mood']} with energy level {last['energy']}. How is today compared to that?"
+    else:
+        hint = "Hey! How are you feeling today?"
+
+
     # Logging setup
     # Add any other context you want in all log entries here
     ctx.log_context_fields = {
@@ -130,6 +169,11 @@ async def entrypoint(ctx: JobContext):
         # See more at https://docs.livekit.io/agents/build/audio/#preemptive-generation
         preemptive_generation=True,
     )
+
+    
+    # Inject this into system message context
+    session.llm.system_message = hint
+
 
     # To use a realtime model instead of a voice pipeline, use the following session setup instead.
     # (Note: This is for the OpenAI Realtime API. For other providers, see https://docs.livekit.io/agents/models/realtime/))

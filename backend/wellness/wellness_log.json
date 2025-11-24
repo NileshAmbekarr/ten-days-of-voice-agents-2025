@@ -1,0 +1,25 @@
+[
+  {
+    "timestamp": "2025-11-24T16:25:55.291645",
+    "mood": null,
+    "energy": null,
+    "goals": [],
+    "summary": "Feeling None with energy None and goals []"
+  },
+  {
+    "timestamp": "2025-11-24T17:48:48.440693",
+    "mood": "good",
+    "energy": "7",
+    "goals": [],
+    "summary": "Feeling good with energy 7 and goals []"
+  },
+  {
+    "timestamp": "2025-11-24T17:58:51.117497",
+    "mood": "good",
+    "energy": "7",
+    "goals": [
+      "Complete college assignments, Go for a walk"
+    ],
+    "summary": "Feeling good with energy 7 and goals ['Complete college assignments, Go for a walk']"
+  }
+]

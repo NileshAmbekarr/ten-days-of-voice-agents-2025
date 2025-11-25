@@ -35,7 +35,7 @@ export const WelcomeView = ({
         
 
         <p className="text-foreground max-w-prose pt-1 leading-6 font-medium">
-          Order a drink from a friendly coffee shop barista.
+          Learn with the Agent.AI. Quizzes and more...
         </p>
 
         <Button variant="primary" size="lg" onClick={onStartCall} className="mt-6 w-64 font-mono">

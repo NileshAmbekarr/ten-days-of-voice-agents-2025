@@ -1,0 +1,72 @@
+{
+  "company": "TakeUForward",
+  "tagline": "Helping students and professionals crack coding interviews and DSA.",
+  "description": "TakeUForward is a platform focused on data structures and algorithms, system design, and interview preparation through courses, videos, and resources.",
+  "pricing": "We offer multiple paid courses and some free content. Pricing and offers may vary by course and time.",
+  "faq": [
+    {
+      "q": "What does your product do?",
+      "a": "TakeUForward helps learners master DSA, system design, and interview preparation through structured content and guidance."
+    },
+    {
+      "q": "Who is this for?",
+      "a": "It is for students, working professionals, and anyone preparing for coding interviews or improving problem solving skills."
+    },
+    {
+      "q": "Do you have a free tier?",
+      "a": "We provide free YouTube content and some free learning resources. Detailed paid course access is available separately."
+    },
+    {
+      "q": "Do you provide placement guarantee?",
+      "a": "We focus on skill-building and interview preparation. Placement outcomes depend on many external factors."
+    },
+    {
+      "q": "Is it okay to start interview prep from scratch if I have less experience?",
+      "a": "Absolutely! Everyone starts somewhere. We’ve curated beginner-friendly resources, practice problems, and roadmaps to help you gradually build your skills from basic to advanced."
+    },
+    {
+      "q": "How do I balance college academics with interview prep?",
+      "a": "Time management is key. Start with small, daily targets, 30 minutes of DSA or 1 problem a day. Use weekends or breaks to focus more on core subjects or mock interviews. Our flexible content and daily task scheduler helps you prep at your pace."
+    },
+    {
+      "q": "What makes takeUforward different from other platforms?",
+      "a": "We’re not just another prep site, we’re your interview buddy. Our platform blends structured sheets, real-world interview experience (soon to be LIVE), and upcoming tuf+ features like premium question sets, mock sessions, etc."
+    },
+    {
+      "q": "Are your resources suitable for non-CS background students?",
+      "a": "Yes! Our materials are beginner-friendly and explain concepts clearly, even for those without a CS degree. With dedication, you can crack interviews regardless of your background."
+    },
+    {
+      "q": "Can I get a trial or preview of tuf+ before purchasing?",
+      "a": "We currently do not offer a trial version for tuf+ due to content misuse during previews. However, the platform has high-quality material and structured guidance that has helped thousands of learners."
+    },
+    {
+      "q": "Should I buy tuf+ or not?",
+      "a": "tuf+ has helped thousands of students crack dream companies and professionals make successful transitions. If you're serious about interview prep and want structured, proven content, tuf+ is made for you."
+    },
+    {
+      "q": "What are the essential things to cover in core coding subjects?",
+      "a": "Along with DSA, focus on DBMS, OS, OOPs, and Computer Networks. These form the backbone of technical interviews. We provide structured questions, video solutions, and in-depth articles for each topic."
+    },
+    {
+      "q": "How should I approach system design interview questions?",
+      "a": "System design is about showcasing thought process and trade-offs. Understand requirements, identify constraints, think scalability, availability vs consistency, performance, and communicate reasoning clearly."
+    },
+    {
+      "q": "What's the best way to prepare for coding interviews?",
+      "a": "Consistent practice is key. Solve varied problems, learn patterns, and build strong problem-solving skills. tuf+ provides mock environments, structured sheets, coding challenges, and detailed guides."
+    },
+    {
+      "q": "Do you cover Low-Level Design (LLD)?",
+      "a": "Yes, LLD concepts are included and more problems will be added this month."
+    },
+    {
+      "q": "Do you offer 1:1 mentorship?",
+      "a": "Currently we don’t offer 1:1 mentorship. We conduct group mentorship sessions where you can ask questions and get guidance."
+    },
+    {
+      "q": "Can I opt out of the program if I don’t like it?",
+      "a": "We currently have a no-refund policy. Review offerings carefully before purchasing, and contact us if you have questions before enrolling."
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+[
+  {
+    "timestamp": "2025-11-26T11:48:19.626714",
+    "lead": {
+      "name": "Nimish",
+      "company": null,
+      "email": null,
+      "role": "student",
+      "use_case": null,
+      "team_size": null,
+      "timeline": null
+    },
+    "summary": "Nimish is a student interested in TakeUForward for learning and interview preparation."
+  },
+  {
+    "timestamp": "2025-11-26T17:55:49.219563",
+    "lead": {
+      "name": "Nilesh",
+      "company": null,
+      "email": "Nilesh@mail.com",
+      "role": "Student - Software Engineering",
+      "use_case": "Learning DSA and System Design as a beginner",
+      "team_size": "1 (studying alone)",
+      "timeline": null
+    },
+    "summary": "Nilesh, a software engineering student and beginner in DSA and System Design, is looking for a platform to learn and practice, considering TakeUForward. Timeline: now/soon."
+  }
+]

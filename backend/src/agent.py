@@ -1,7 +1,9 @@
 import logging
-from datetime import datetime
 import json
 import os
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+
 from dotenv import load_dotenv
 from livekit.agents import (
     Agent,
@@ -15,7 +17,7 @@ from livekit.agents import (
     metrics,
     tokenize,
     function_tool,
-    RunContext
+    RunContext,
 )
 from livekit.plugins import murf, silero, google, deepgram, noise_cancellation
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
@@ -24,125 +26,296 @@ logger = logging.getLogger("agent")
 
 load_dotenv(".env.local")
 
-order_state = {
-    "drinkType": None,
-    "size": None,
-    "milk": None,
-    "extras": [],
+
+# -----------------------------
+# FAQ LOADING & SIMPLE SEARCH
+# -----------------------------
+
+
+FAQ_DATA: Dict[str, Any] = {}
+FAQ_ENTRIES: List[Dict[str, str]] = []
+
+
+def _load_faq() -> None:
+    """Load TakeUForward FAQ / company info from JSON."""
+    global FAQ_DATA, FAQ_ENTRIES
+
+    possible_paths = [
+        os.path.join("..", "shared-data", "tuf_faq.json"),
+        os.path.join("shared-data", "tuf_faq.json"),
+        "tuf_faq.json",
+    ]
+
+    faq_raw: Optional[Dict[str, Any]] = None
+    for path in possible_paths:
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    faq_raw = json.load(f)
+                logger.info(f"Loaded TakeUForward FAQ from {path}")
+                break
+            except Exception as e:
+                logger.error(f"Failed to load FAQ from {path}: {e}")
+
+    if faq_raw is None:
+        # Fallback minimal data so agent doesn't completely break
+        logger.warning("No tuf_faq.json found. Using fallback FAQ data.")
+        faq_raw = {
+            "company": "TakeUForward",
+            "tagline": "Helping learners with DSA and interview preparation.",
+            "description": "TakeUForward is focused on teaching data structures, algorithms and interview skills.",
+            "pricing": "We have multiple courses and some free resources. Exact pricing depends on the course and time.",
+            "faq": [
+                {
+                    "q": "What does your product do?",
+                    "a": "TakeUForward helps people learn DSA, system design and crack coding interviews.",
+                },
+                {
+                    "q": "Who is this for?",
+                    "a": "It is for students and professionals preparing for tech interviews.",
+                },
+                {
+                    "q": "Do you have a free tier?",
+                    "a": "We provide free YouTube content and some resources; detailed paid courses are available separately.",
+                },
+            ],
+        }
+
+    FAQ_DATA = faq_raw
+    FAQ_ENTRIES = faq_raw.get("faq", [])
+
+
+def faq_search_answer(query: str) -> str:
+    """
+    Extremely simple FAQ match: keyword overlap count.
+    Returns best matching answer or a fallback using description/pricing.
+    """
+    if not FAQ_ENTRIES:
+        desc = FAQ_DATA.get("description", "")
+        pricing = FAQ_DATA.get("pricing", "")
+        if desc or pricing:
+            return desc + ("\n\nPricing: " + pricing if pricing else "")
+        return "I don't have enough information to answer that based on my current FAQ data."
+
+    q_tokens = [t for t in query.lower().split() if len(t) > 2]
+    best_item = None
+    best_score = 0
+
+    for item in FAQ_ENTRIES:
+        text = (item.get("q", "") + " " + item.get("a", "")).lower()
+        score = sum(1 for tok in q_tokens if tok in text)
+        if score > best_score:
+            best_score = score
+            best_item = item
+
+    if best_item and best_score > 0:
+        return best_item.get("a", "").strip() or "I found a related FAQ but it has no answer text."
+
+    # fallback: description / pricing
+    desc = FAQ_DATA.get("description", "")
+    pricing = FAQ_DATA.get("pricing", "")
+    if desc or pricing:
+        return desc + ("\n\nPricing: " + pricing if pricing else "")
+
+    return "I don't have enough information in my FAQ data to answer that."
+
+
+# Load FAQ at import time
+_load_faq()
+
+
+# -----------------------------
+# LEAD STATE & PERSISTENCE
+# -----------------------------
+
+
+lead_state: Dict[str, Any] = {
     "name": None,
+    "company": None,
+    "email": None,
+    "role": None,
+    "use_case": None,
+    "team_size": None,
+    "timeline": None,
 }
 
-class Assistant(Agent):
+LEADS_DIR = "leads"
+LEADS_FILE = os.path.join(LEADS_DIR, "tuf_leads.json")
+
+
+def reset_lead_state() -> None:
+    global lead_state
+    lead_state = {
+        "name": None,
+        "company": None,
+        "email": None,
+        "role": None,
+        "use_case": None,
+        "team_size": None,
+        "timeline": None,
+    }
+
+
+# -----------------------------
+# ASSISTANT (SDR) AGENT
+# -----------------------------
+
+
+class SDRAssistant(Agent):
     def __init__(self) -> None:
-        super().__init__(instructions="""
-                You are a friendly coffee shop barista for Blue Tokai Coffee.
+        company = FAQ_DATA.get("company", "TakeUForward")
+        tagline = FAQ_DATA.get("tagline", "Helping learners with DSA and interviews.")
 
-                Your goal is to take a coffee order by filling the following JSON object:
-                {
-                "drinkType": "string",
-                "size": "string",
-                "milk": "string",
-                "extras": ["string"],
-                "name": "string"
-                }
+        super().__init__(
+            instructions=f"""
+You are a friendly, professional Sales Development Representative (SDR) for the Indian company '{company}'.
 
-                Ask clarifying questions until ALL fields are filled.
-                Ask only one question at a time.
+High-level:
+- You talk to visitors who are interested in {company}.
+- You greet them warmly and sound like a human SDR.
+- You ask what brought them here and what they're working on.
+- You focus the conversation on understanding their needs and whether {company} can help.
 
-                When all fields are filled, call the tool `save_order` with the full JSON object.
-                Then speak a friendly confirmation message summarizing the order loudly and clearly.
-                """,
+You have access to a small FAQ and company info through tools.
+VERY IMPORTANT:
+- When the user asks about the product, who it's for, what it does, or pricing,
+  you MUST call the faq_search tool with their question text.
+- Then answer ONLY based on the tool output. Do NOT make up extra factual details.
+- If you don't know something, say that you don't have that info and suggest they check the website.
+
+Lead collection:
+You need to naturally collect the following fields during the conversation:
+- name
+- company
+- email
+- role
+- use_case (what they want to use this for)
+- team_size
+- timeline (now / soon / later or similar)
+
+As the user provides each piece of information:
+- Call update_lead(field="<field>", value="<value>").
+- Confirm briefly: e.g. "Got it, you're a backend engineer at X", etc.
+- Do NOT aggressively interrogate them; keep it conversational and supportive.
+
+End of call:
+- If the user says things like "that's all", "I'm done", "thanks", or clearly wants to end:
+  1) Give a short verbal summary:
+     - who they are (name, role, company if available)
+     - what they want to use {company} for (use_case)
+     - rough timeline
+  2) Then call save_lead(summary="<your short summary>").
+  3) After calling save_lead, close politely.
+
+Style:
+- Friendly, concise, no slang, no emojis.
+- Ask one question at a time.
+- If user changes topic, gently bring back to understanding their needs and collecting lead info.
+""",
         )
 
-    
-    @function_tool
-    async def update_order(self, context: RunContext, field: str, value: str):
-        """Update a specific field in the order."""
-        global order_state
-        if field == "extras":
-            order_state["extras"].append(value)
-        else:
-            order_state[field] = value
-        return "updated"
+    # ------------- TOOLS -------------
 
     @function_tool
-    async def save_order(self, context: RunContext):
-        """Save the completed order to a JSON file."""
-        os.makedirs("orders", exist_ok=True)
-        filename = f"orders/order_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        with open(filename, "w") as f:
-            json.dump(order_state, f, indent=2)
-        return f"Order saved to {filename}"
-    
+    async def faq_search(self, context: RunContext, query: str) -> str:
+        """
+        Search the TakeUForward FAQ / company content for an answer.
 
-    # To add tools, use the @function_tool decorator.
-    # Here's an example that adds a simple weather tool.
-    # You also have to add `from livekit.agents import function_tool, RunContext` to the top of this file
-    # @function_tool
-    # async def lookup_weather(self, context: RunContext, location: str):
-    #     """Use this tool to look up current weather information in the given location.
-    #
-    #     If the location is not supported by the weather service, the tool will indicate this. You must tell the user the location's weather is unavailable.
-    #
-    #     Args:
-    #         location: The location to look up weather information for (e.g. city name)
-    #     """
-    #
-    #     logger.info(f"Looking up weather for {location}")
-    #
-    #     return "sunny with a temperature of 70 degrees."
+        Use this tool whenever the user asks:
+        - What does your product do?
+        - Who is this for?
+        - Do you have free tier / pricing?
+        - Any other product / company / pricing related question.
+
+        Args:
+            query: The user's question in natural language.
+        """
+        logger.info(f"FAQ search called with query: {query!r}")
+        return faq_search_answer(query)
+
+    @function_tool
+    async def update_lead(self, context: RunContext, field: str, value: str) -> str:
+        """
+        Update a single lead field.
+
+        field: one of name, company, email, role, use_case, team_size, timeline.
+        value: the user's provided value for that field.
+        """
+        global lead_state
+        field_norm = field.strip().lower()
+        if field_norm not in lead_state:
+            return f"Field '{field}' is not a valid lead field."
+
+        lead_state[field_norm] = value.strip()
+        logger.info(f"Updated lead field {field_norm} -> {value!r}")
+        return f"Updated {field_norm}"
+
+    @function_tool
+    async def save_lead(self, context: RunContext, summary: str) -> str:
+        """
+        Persist the collected lead to a JSON file.
+
+        summary: A short natural language summary of who they are and what they want.
+        """
+        os.makedirs(LEADS_DIR, exist_ok=True)
+
+        leads: List[Dict[str, Any]] = []
+        if os.path.exists(LEADS_FILE):
+            try:
+                with open(LEADS_FILE, "r", encoding="utf-8") as f:
+                    leads = json.load(f)
+            except Exception as e:
+                logger.error(f"Failed to read existing leads file: {e}")
+
+        entry = {
+            "timestamp": datetime.now().isoformat(),
+            "lead": lead_state.copy(),
+            "summary": summary.strip(),
+        }
+        leads.append(entry)
+
+        with open(LEADS_FILE, "w", encoding="utf-8") as f:
+            json.dump(leads, f, indent=2)
+
+        logger.info(f"Saved lead entry at {entry['timestamp']}")
+        # Reset for potential future calls
+        reset_lead_state()
+
+        return "Lead saved"
+
+
+# -----------------------------
+# PREWARM & ENTRYPOINT
+# -----------------------------
 
 
 def prewarm(proc: JobProcess):
+    # Preload VAD
     proc.userdata["vad"] = silero.VAD.load()
 
 
 async def entrypoint(ctx: JobContext):
-    # Logging setup
-    # Add any other context you want in all log entries here
+    # Logging context
     ctx.log_context_fields = {
         "room": ctx.room.name,
     }
 
-    # Set up a voice AI pipeline using OpenAI, Cartesia, AssemblyAI, and the LiveKit turn detector
+    # Voice pipeline: Deepgram STT, Gemini LLM, Murf TTS
     session = AgentSession(
-        # Speech-to-text (STT) is your agent's ears, turning the user's speech into text that the LLM can understand
-        # See all available models at https://docs.livekit.io/agents/models/stt/
         stt=deepgram.STT(model="nova-3"),
-        # A Large Language Model (LLM) is your agent's brain, processing user input and generating a response
-        # See all available models at https://docs.livekit.io/agents/models/llm/
-        llm=google.LLM(
-                model="gemini-2.5-flash",
-            ),
-        # Text-to-speech (TTS) is your agent's voice, turning the LLM's text into speech that the user can hear
-        # See all available models as well as voice selections at https://docs.livekit.io/agents/models/tts/
+        llm=google.LLM(model="gemini-2.5-flash"),
         tts=murf.TTS(
-                voice="en-US-matthew", 
-                style="Conversation",
-                tokenizer=tokenize.basic.SentenceTokenizer(min_sentence_len=2),
-                text_pacing=True
-            ),
-        # VAD and turn detection are used to determine when the user is speaking and when the agent should respond
-        # See more at https://docs.livekit.io/agents/build/turns
+            voice="en-US-matthew",
+            style="Conversation",
+            tokenizer=tokenize.basic.SentenceTokenizer(min_sentence_len=2),
+            text_pacing=True,
+        ),
         turn_detection=MultilingualModel(),
         vad=ctx.proc.userdata["vad"],
-        # allow the LLM to generate a response while waiting for the end of turn
-        # See more at https://docs.livekit.io/agents/build/audio/#preemptive-generation
         preemptive_generation=True,
     )
 
-    # To use a realtime model instead of a voice pipeline, use the following session setup instead.
-    # (Note: This is for the OpenAI Realtime API. For other providers, see https://docs.livekit.io/agents/models/realtime/))
-    # 1. Install livekit-agents[openai]
-    # 2. Set OPENAI_API_KEY in .env.local
-    # 3. Add `from livekit.plugins import openai` to the top of this file
-    # 4. Use the following session setup instead of the version above
-    # session = AgentSession(
-    #     llm=openai.realtime.RealtimeModel(voice="marin")
-    # )
-
-    # Metrics collection, to measure pipeline performance
-    # For more information, see https://docs.livekit.io/agents/build/metrics/
+    # Metrics collection
     usage_collector = metrics.UsageCollector()
 
     @session.on("metrics_collected")
@@ -156,25 +329,18 @@ async def entrypoint(ctx: JobContext):
 
     ctx.add_shutdown_callback(log_usage)
 
-    # # Add a virtual avatar to the session, if desired
-    # # For other providers, see https://docs.livekit.io/agents/models/avatar/
-    # avatar = hedra.AvatarSession(
-    #   avatar_id="...",  # See https://docs.livekit.io/agents/models/avatar/plugins/hedra
-    # )
-    # # Start the avatar and wait for it to join
-    # await avatar.start(session, room=ctx.room)
+    assistant = SDRAssistant()
 
-    # Start the session, which initializes the voice pipeline and warms up the models
+    # Start the SDR session
     await session.start(
-        agent=Assistant(),
+        agent=assistant,
         room=ctx.room,
         room_input_options=RoomInputOptions(
-            # For telephony applications, use `BVCTelephony` for best results
             noise_cancellation=noise_cancellation.BVC(),
         ),
     )
 
-    # Join the room and connect to the user
+    # Connect to the room / user
     await ctx.connect()
 
 

@@ -1,7 +1,9 @@
 import logging
-from datetime import datetime
 import json
 import os
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+
 from dotenv import load_dotenv
 from livekit.agents import (
     Agent,
@@ -15,7 +17,7 @@ from livekit.agents import (
     metrics,
     tokenize,
     function_tool,
-    RunContext
+    RunContext,
 )
 from livekit.plugins import murf, silero, google, deepgram, noise_cancellation
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
@@ -24,157 +26,361 @@ logger = logging.getLogger("agent")
 
 load_dotenv(".env.local")
 
-order_state = {
-    "drinkType": None,
-    "size": None,
-    "milk": None,
-    "extras": [],
-    "name": None,
+# -----------------------------
+# CATALOG LOAD + RECIPES
+# -----------------------------
+
+CATALOG_PATHS = [
+    os.path.join("..", "shared-data", "instamart_catalog.json"),
+    os.path.join("shared-data", "instamart_catalog.json"),
+    "instamart_catalog.json",
+]
+
+CATALOG: List[Dict[str, Any]] = []
+
+
+def load_catalog():
+    global CATALOG
+    for p in CATALOG_PATHS:
+        if os.path.exists(p):
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                CATALOG = data.get("items", [])
+                logger.info(f"Loaded Instamart catalog from {p} with {len(CATALOG)} items")
+                return
+            except Exception as e:
+                logger.error(f"Failed to load catalog from {p}: {e}")
+    logger.warning("No Instamart catalog found, using empty catalog.")
+    CATALOG = []
+
+
+load_catalog()
+
+
+def find_item_by_name(name: str) -> Optional[Dict[str, Any]]:
+    name = name.lower().strip()
+    # simple contains-based match
+    for item in CATALOG:
+        if name in item["name"].lower():
+            return item
+    return None
+
+
+# simple recipes mapping: dish -> list of item names
+RECIPES: Dict[str, List[str]] = {
+    "peanut butter sandwich": ["Bread", "Peanut Butter"],
+    "sandwich": ["Whole Wheat Bread", "Cheese Slices (10 pcs)"],
+    "pasta": ["Pasta", "Tomato Pasta Sauce"],
 }
 
-class Assistant(Agent):
+# -----------------------------
+# CART & ORDER STORAGE
+# -----------------------------
+
+cart: List[Dict[str, Any]] = []
+
+ORDERS_DIR = "orders"
+ORDERS_FILE = os.path.join(ORDERS_DIR, "instamart_orders.json")
+
+
+def reset_cart():
+    global cart
+    cart = []
+
+
+def cart_total() -> int:
+    return sum(item["price"] * item["qty"] for item in cart)
+
+
+# -----------------------------
+# INSTAMART ASSISTANT
+# -----------------------------
+
+class InstamartAssistant(Agent):
     def __init__(self) -> None:
-        super().__init__(instructions="""
-                You are a friendly coffee shop barista for Blue Tokai Coffee.
+        super().__init__(
+            instructions="""
+You are a friendly voice ordering assistant for Swiggy Instamart (demo).
+You help users order groceries, snacks, and simple meal ingredients.
 
-                Your goal is to take a coffee order by filling the following JSON object:
-                {
-                "drinkType": "string",
-                "size": "string",
-                "milk": "string",
-                "extras": ["string"],
-                "name": "string"
-                }
+Core behavior:
+- Greet the user and explain you can help them order groceries and simple meal ingredients.
+- Ask what they would like to order.
+- For each item request, ask for missing details like quantity or variant if not clear.
+- When the user mentions something like:
+    "ingredients for a peanut butter sandwich"
+    "ingredients for pasta"
+  you must call the add_recipe_to_cart tool with the appropriate recipe name.
 
-                Ask clarifying questions until ALL fields are filled.
-                Ask only one question at a time.
+Cart rules:
+- You do NOT invent items. You only use items from the catalog.
+- For normal items, call add_item_to_cart(name, quantity).
+- To remove items, call remove_item_from_cart(name).
+- To show the cart, call list_cart().
+- After each add/remove/update, briefly confirm what changed.
 
-                When all fields are filled, call the tool `save_order` with the full JSON object.
-                Then speak a friendly confirmation message summarizing the order loudly and clearly.
-                """,
+Order placement:
+- When the user says they are done (e.g. "that's all", "place my order", "I'm done"),
+  you MUST:
+  1) Call list_cart() to get the final cart summary.
+  2) Confirm the total and contents with the user.
+  3) Ask for a simple customer name and address in one or two short questions.
+  4) Then call place_order(customer_name, address) to persist the order.
+  5) After place_order returns, clearly say that the order has been placed.
+
+Constraints:
+- Keep responses short and conversational.
+- Ask ONE question at a time.
+- Do not hallucinate new categories, items, or prices beyond the catalog.
+- If an item is not available, say it's not in the Instamart demo catalog.
+""",
         )
 
-    
-    @function_tool
-    async def update_order(self, context: RunContext, field: str, value: str):
-        """Update a specific field in the order."""
-        global order_state
-        if field == "extras":
-            order_state["extras"].append(value)
-        else:
-            order_state[field] = value
-        return "updated"
+    # TOOLS
 
     @function_tool
-    async def save_order(self, context: RunContext):
-        """Save the completed order to a JSON file."""
-        os.makedirs("orders", exist_ok=True)
-        filename = f"orders/order_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        with open(filename, "w") as f:
-            json.dump(order_state, f, indent=2)
-        return f"Order saved to {filename}"
-    
+    async def add_item_to_cart(
+        self,
+        context: RunContext,
+        name: str,
+        quantity: int = 1,
+    ) -> str:
+        """
+        Add a specific catalog item to the cart.
 
-    # To add tools, use the @function_tool decorator.
-    # Here's an example that adds a simple weather tool.
-    # You also have to add `from livekit.agents import function_tool, RunContext` to the top of this file
-    # @function_tool
-    # async def lookup_weather(self, context: RunContext, location: str):
-    #     """Use this tool to look up current weather information in the given location.
-    #
-    #     If the location is not supported by the weather service, the tool will indicate this. You must tell the user the location's weather is unavailable.
-    #
-    #     Args:
-    #         location: The location to look up weather information for (e.g. city name)
-    #     """
-    #
-    #     logger.info(f"Looking up weather for {location}")
-    #
-    #     return "sunny with a temperature of 70 degrees."
+        name: partial or full item name (e.g., "bread", "pasta")
+        quantity: how many units to add (default 1)
+        """
+        global cart
+        item = find_item_by_name(name)
+        if not item:
+            return f"I couldn't find '{name}' in the Instamart demo catalog."
 
+        if quantity <= 0:
+            quantity = 1
+
+        # Check if already in cart
+        for entry in cart:
+            if entry["id"] == item["id"]:
+                entry["qty"] += quantity
+                logger.info(f"Updated cart item {item['name']} to qty {entry['qty']}")
+                return f"Updated {item['name']} to quantity {entry['qty']} in your cart."
+
+        cart.append(
+            {
+                "id": item["id"],
+                "name": item["name"],
+                "price": item["price"],
+                "qty": quantity,
+            }
+        )
+        logger.info(f"Added {quantity} x {item['name']} to cart")
+        return f"Added {quantity} x {item['name']} to your cart."
+
+    @function_tool
+    async def remove_item_from_cart(
+        self,
+        context: RunContext,
+        name: str,
+    ) -> str:
+        """
+        Remove an item from the cart by name (or reduce quantity if needed).
+
+        name: partial or full item name.
+        """
+        global cart
+        name = name.lower().strip()
+        new_cart = []
+        removed_any = False
+        for entry in cart:
+            if name in entry["name"].lower():
+                removed_any = True
+                logger.info(f"Removed {entry['name']} from cart")
+                continue
+            new_cart.append(entry)
+
+        cart = new_cart
+        if removed_any:
+            return f"Removed {name} from your cart."
+        return f"I couldn't find {name} in your cart."
+
+    @function_tool
+    async def list_cart(self, context: RunContext) -> str:
+        """
+        List current items in the cart and total price.
+        """
+        if not cart:
+            return "Your cart is currently empty."
+
+        lines = []
+        for entry in cart:
+            lines.append(
+                f"{entry['qty']} x {entry['name']} (₹{entry['price']} each)"
+            )
+        total = cart_total()
+        summary = "; ".join(lines)
+        logger.info(f"Cart summary: {summary} | total={total}")
+        return f"Your cart has: {summary}. Total so far is ₹{total}."
+
+    @function_tool
+    async def add_recipe_to_cart(
+        self,
+        context: RunContext,
+        recipe_name: str,
+        servings: int = 1,
+    ) -> str:
+        """
+        Add all items needed for a simple recipe to the cart.
+
+        recipe_name: e.g. "peanut butter sandwich", "pasta"
+        servings: multiplier for quantities (basic usage only)
+        """
+        global cart
+        key = recipe_name.lower().strip()
+        if key not in RECIPES:
+            return f"I don't have a recipe for {recipe_name} in this demo."
+
+        added_items = []
+        for item_name in RECIPES[key]:
+            item = find_item_by_name(item_name)
+            if not item:
+                continue
+            quantity = max(servings, 1)
+            # update or append
+            for entry in cart:
+                if entry["id"] == item["id"]:
+                    entry["qty"] += quantity
+                    break
+            else:
+                cart.append(
+                    {
+                        "id": item["id"],
+                        "name": item["name"],
+                        "price": item["price"],
+                        "qty": quantity,
+                    }
+                )
+            added_items.append(f"{quantity} x {item['name']}")
+
+        if not added_items:
+            return f"I couldn't find any matching items in the catalog for {recipe_name}."
+        added_str = ", ".join(added_items)
+        logger.info(f"Recipe {recipe_name} added: {added_str}")
+        return f"I've added {added_str} to your cart for {recipe_name}."
+
+    @function_tool
+    async def place_order(
+        self,
+        context: RunContext,
+        customer_name: str,
+        address: str,
+    ) -> str:
+        """
+        Place the current cart as an order and save it to JSON.
+
+        customer_name: simple text name
+        address: free-form address string
+        """
+        global cart
+
+        if not cart:
+            return "Your cart is empty; there is nothing to place."
+
+        os.makedirs(ORDERS_DIR, exist_ok=True)
+
+        orders: List[Dict[str, Any]] = []
+        if os.path.exists(ORDERS_FILE):
+            try:
+                with open(ORDERS_FILE, "r", encoding="utf-8") as f:
+                    orders = json.load(f)
+            except Exception as e:
+                logger.error(f"Failed reading existing orders: {e}")
+
+        order_id = len(orders) + 1
+        total = cart_total()
+        order_items = [
+            {
+                "name": entry["name"],
+                "qty": entry["qty"],
+                "price": entry["price"],
+                "subtotal": entry["price"] * entry["qty"],
+            }
+            for entry in cart
+        ]
+
+        order = {
+            "id": order_id,
+            "timestamp": datetime.now().isoformat(),
+            "customer_name": customer_name.strip(),
+            "address": address.strip(),
+            "items": order_items,
+            "total": total,
+            "status": "placed",
+        }
+
+        orders.append(order)
+
+        with open(ORDERS_FILE, "w", encoding="utf-8") as f:
+            json.dump(orders, f, indent=2)
+
+        logger.info(f"Placed order #{order_id} for {customer_name}, total ₹{total}")
+
+        # reset cart for next session
+        reset_cart()
+
+        return f"Order #{order_id} placed successfully with total ₹{total}."
+
+
+# -----------------------------
+# PREWARM & ENTRYPOINT
+# -----------------------------
 
 def prewarm(proc: JobProcess):
     proc.userdata["vad"] = silero.VAD.load()
 
 
 async def entrypoint(ctx: JobContext):
-    # Logging setup
-    # Add any other context you want in all log entries here
     ctx.log_context_fields = {
         "room": ctx.room.name,
     }
 
-    # Set up a voice AI pipeline using OpenAI, Cartesia, AssemblyAI, and the LiveKit turn detector
     session = AgentSession(
-        # Speech-to-text (STT) is your agent's ears, turning the user's speech into text that the LLM can understand
-        # See all available models at https://docs.livekit.io/agents/models/stt/
         stt=deepgram.STT(model="nova-3"),
-        # A Large Language Model (LLM) is your agent's brain, processing user input and generating a response
-        # See all available models at https://docs.livekit.io/agents/models/llm/
-        llm=google.LLM(
-                model="gemini-2.5-flash",
-            ),
-        # Text-to-speech (TTS) is your agent's voice, turning the LLM's text into speech that the user can hear
-        # See all available models as well as voice selections at https://docs.livekit.io/agents/models/tts/
+        llm=google.LLM(model="gemini-2.5-flash"),
         tts=murf.TTS(
-                voice="en-US-matthew", 
-                style="Conversation",
-                tokenizer=tokenize.basic.SentenceTokenizer(min_sentence_len=2),
-                text_pacing=True
-            ),
-        # VAD and turn detection are used to determine when the user is speaking and when the agent should respond
-        # See more at https://docs.livekit.io/agents/build/turns
+            voice="en-US-matthew",
+            style="Conversation",
+            tokenizer=tokenize.basic.SentenceTokenizer(min_sentence_len=2),
+            text_pacing=True,
+        ),
         turn_detection=MultilingualModel(),
         vad=ctx.proc.userdata["vad"],
-        # allow the LLM to generate a response while waiting for the end of turn
-        # See more at https://docs.livekit.io/agents/build/audio/#preemptive-generation
         preemptive_generation=True,
     )
 
-    # To use a realtime model instead of a voice pipeline, use the following session setup instead.
-    # (Note: This is for the OpenAI Realtime API. For other providers, see https://docs.livekit.io/agents/models/realtime/))
-    # 1. Install livekit-agents[openai]
-    # 2. Set OPENAI_API_KEY in .env.local
-    # 3. Add `from livekit.plugins import openai` to the top of this file
-    # 4. Use the following session setup instead of the version above
-    # session = AgentSession(
-    #     llm=openai.realtime.RealtimeModel(voice="marin")
-    # )
-
-    # Metrics collection, to measure pipeline performance
-    # For more information, see https://docs.livekit.io/agents/build/metrics/
     usage_collector = metrics.UsageCollector()
 
     @session.on("metrics_collected")
-    def _on_metrics_collected(ev: MetricsCollectedEvent):
+    def _on_metrics(ev: MetricsCollectedEvent):
         metrics.log_metrics(ev.metrics)
         usage_collector.collect(ev.metrics)
 
     async def log_usage():
-        summary = usage_collector.get_summary()
-        logger.info(f"Usage: {summary}")
+        logger.info(f"Usage summary: {usage_collector.get_summary()}")
 
     ctx.add_shutdown_callback(log_usage)
 
-    # # Add a virtual avatar to the session, if desired
-    # # For other providers, see https://docs.livekit.io/agents/models/avatar/
-    # avatar = hedra.AvatarSession(
-    #   avatar_id="...",  # See https://docs.livekit.io/agents/models/avatar/plugins/hedra
-    # )
-    # # Start the avatar and wait for it to join
-    # await avatar.start(session, room=ctx.room)
+    assistant = InstamartAssistant()
 
-    # Start the session, which initializes the voice pipeline and warms up the models
     await session.start(
-        agent=Assistant(),
+        agent=assistant,
         room=ctx.room,
         room_input_options=RoomInputOptions(
-            # For telephony applications, use `BVCTelephony` for best results
             noise_cancellation=noise_cancellation.BVC(),
         ),
     )
 
-    # Join the room and connect to the user
     await ctx.connect()
 
 

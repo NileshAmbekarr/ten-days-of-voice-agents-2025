@@ -1,0 +1,16 @@
+{
+  "items": [
+    { "id": 1, "name": "Bread", "category": "Groceries", "price": 40, "tags": ["sandwich"] },
+    { "id": 2, "name": "Eggs (6 pack)", "category": "Groceries", "price": 55, "tags": ["breakfast"] },
+    { "id": 3, "name": "Milk 1L", "category": "Groceries", "price": 50, "tags": [] },
+    { "id": 4, "name": "Peanut Butter", "category": "Snacks", "price": 120, "tags": ["sandwich"] },
+    { "id": 5, "name": "Whole Wheat Bread", "category": "Groceries", "price": 45, "tags": ["sandwich", "healthy"] },
+    { "id": 6, "name": "Pasta", "category": "Prepared Food", "price": 70, "tags": ["pasta"] },
+    { "id": 7, "name": "Tomato Pasta Sauce", "category": "Prepared Food", "price": 90, "tags": ["pasta"] },
+    { "id": 8, "name": "Onion (1kg)", "category": "Vegetables", "price": 35, "tags": [] },
+    { "id": 9, "name": "Tomato (1kg)", "category": "Vegetables", "price": 40, "tags": [] },
+    { "id": 10, "name": "Coke 1.25L", "category": "Beverages", "price": 65, "tags": [] },
+    { "id": 11, "name": "Maggi Noodles", "category": "Prepared Food", "price": 14, "tags": ["snack"] },
+    { "id": 12, "name": "Cheese Slices (10 pcs)", "category": "Dairy", "price": 110, "tags": ["sandwich"] }
+  ]
+}

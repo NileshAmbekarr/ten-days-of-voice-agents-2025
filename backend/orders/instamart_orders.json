@@ -1,0 +1,30 @@
+[
+  {
+    "id": 1,
+    "timestamp": "2025-11-28T18:44:53.794464",
+    "customer_name": "Nilesh",
+    "address": "Puneet",
+    "items": [
+      {
+        "name": "Bread",
+        "qty": 1,
+        "price": 40,
+        "subtotal": 40
+      },
+      {
+        "name": "Pasta",
+        "qty": 1,
+        "price": 70,
+        "subtotal": 70
+      },
+      {
+        "name": "Tomato Pasta Sauce",
+        "qty": 1,
+        "price": 90,
+        "subtotal": 90
+      }
+    ],
+    "total": 200,
+    "status": "placed"
+  }
+]

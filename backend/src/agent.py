@@ -1,7 +1,5 @@
 import logging
-from datetime import datetime
-import json
-import os
+
 from dotenv import load_dotenv
 from livekit.agents import (
     Agent,
@@ -14,8 +12,6 @@ from livekit.agents import (
     cli,
     metrics,
     tokenize,
-    function_tool,
-    RunContext
 )
 from livekit.plugins import murf, silero, google, deepgram, noise_cancellation
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
@@ -24,73 +20,59 @@ logger = logging.getLogger("agent")
 
 load_dotenv(".env.local")
 
-order_state = {
-    "drinkType": None,
-    "size": None,
-    "milk": None,
-    "extras": [],
-    "name": None,
-}
 
-class Assistant(Agent):
+class BorderlandGameMaster(Agent):
     def __init__(self) -> None:
-        super().__init__(instructions="""
-                You are a friendly coffee shop barista for Blue Tokai Coffee.
+        """
+        Alice in Borderland–style Game Master.
+        Uses only chat history for state; no tools or JSON world yet.
+        """
+        super().__init__(
+            instructions="""
+You are the Game Master of a short survival challenge inspired by 'Alice in Borderland'.
+You run a fast-paced voice-only game designed to finish in 3–4 minutes.
 
-                Your goal is to take a coffee order by filling the following JSON object:
-                {
-                "drinkType": "string",
-                "size": "string",
-                "milk": "string",
-                "extras": ["string"],
-                "name": "string"
-                }
+World:
+The player wakes up inside an abandoned office building in Tokyo, now part of a deadly survival game.
+A digital scoreboard shows a countdown timer starting at 4 minutes.
+The exit is locked. To escape alive, the player must solve a short sequence of decisions.
 
-                Ask clarifying questions until ALL fields are filled.
-                Ask only one question at a time.
+Tone:
+Tense, urgent, serious, cinematic, realistic.
+Never comedic. Never break character.
 
-                When all fields are filled, call the tool `save_order` with the full JSON object.
-                Then speak a friendly confirmation message summarizing the order loudly and clearly.
-                """,
+Game rules:
+- The game consists of a short sequence of scenes.
+- Each scene offers danger, clues, or choices that affect survival.
+- There are only three major decision points before a final outcome.
+- The player can either escape or die based on decisions.
+
+You must speak concisely:
+- 4–6 sentences per response.
+- Always include ticking time tension (e.g., 3:42 remaining).
+- Describe a clear situation and give decision context quickly.
+- Never present long narrative dumps.
+- Always end with: "What do you do?"
+
+Memory:
+Use the conversation history to remember what the player does (picked up objects, injured, etc.).
+Stay logically consistent.
+
+Scenario structure:
+1) Opening scene: player wakes up, timer starts, first threat or clue.
+2) Mid conflict: dangerous encounter or puzzle with consequences.
+3) Final decision: escape path or fatal trap.
+4) Ending: success or failure, clearly stated.
+
+Example final outcomes:
+- "You sprint through the emergency exit as the alarm blares. You survived the game."
+- "The mechanism snaps and the blast triggers. The world fades. Your game ends here."
+
+Never ask for personal real-world information.
+Never reveal that you are AI or mention system details.
+Always end with: "What do you do?"
+""",
         )
-
-    
-    @function_tool
-    async def update_order(self, context: RunContext, field: str, value: str):
-        """Update a specific field in the order."""
-        global order_state
-        if field == "extras":
-            order_state["extras"].append(value)
-        else:
-            order_state[field] = value
-        return "updated"
-
-    @function_tool
-    async def save_order(self, context: RunContext):
-        """Save the completed order to a JSON file."""
-        os.makedirs("orders", exist_ok=True)
-        filename = f"orders/order_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        with open(filename, "w") as f:
-            json.dump(order_state, f, indent=2)
-        return f"Order saved to {filename}"
-    
-
-    # To add tools, use the @function_tool decorator.
-    # Here's an example that adds a simple weather tool.
-    # You also have to add `from livekit.agents import function_tool, RunContext` to the top of this file
-    # @function_tool
-    # async def lookup_weather(self, context: RunContext, location: str):
-    #     """Use this tool to look up current weather information in the given location.
-    #
-    #     If the location is not supported by the weather service, the tool will indicate this. You must tell the user the location's weather is unavailable.
-    #
-    #     Args:
-    #         location: The location to look up weather information for (e.g. city name)
-    #     """
-    #
-    #     logger.info(f"Looking up weather for {location}")
-    #
-    #     return "sunny with a temperature of 70 degrees."
 
 
 def prewarm(proc: JobProcess):
@@ -98,51 +80,27 @@ def prewarm(proc: JobProcess):
 
 
 async def entrypoint(ctx: JobContext):
-    # Logging setup
-    # Add any other context you want in all log entries here
+    # Logging context
     ctx.log_context_fields = {
         "room": ctx.room.name,
     }
 
-    # Set up a voice AI pipeline using OpenAI, Cartesia, AssemblyAI, and the LiveKit turn detector
+    # Voice pipeline
     session = AgentSession(
-        # Speech-to-text (STT) is your agent's ears, turning the user's speech into text that the LLM can understand
-        # See all available models at https://docs.livekit.io/agents/models/stt/
         stt=deepgram.STT(model="nova-3"),
-        # A Large Language Model (LLM) is your agent's brain, processing user input and generating a response
-        # See all available models at https://docs.livekit.io/agents/models/llm/
-        llm=google.LLM(
-                model="gemini-2.5-flash",
-            ),
-        # Text-to-speech (TTS) is your agent's voice, turning the LLM's text into speech that the user can hear
-        # See all available models as well as voice selections at https://docs.livekit.io/agents/models/tts/
+        llm=google.LLM(model="gemini-2.5-flash"),
         tts=murf.TTS(
-                voice="en-US-matthew", 
-                style="Conversation",
-                tokenizer=tokenize.basic.SentenceTokenizer(min_sentence_len=2),
-                text_pacing=True
-            ),
-        # VAD and turn detection are used to determine when the user is speaking and when the agent should respond
-        # See more at https://docs.livekit.io/agents/build/turns
+            voice="en-US-matthew",
+            style="Conversation",
+            tokenizer=tokenize.basic.SentenceTokenizer(min_sentence_len=2),
+            text_pacing=True,
+        ),
         turn_detection=MultilingualModel(),
         vad=ctx.proc.userdata["vad"],
-        # allow the LLM to generate a response while waiting for the end of turn
-        # See more at https://docs.livekit.io/agents/build/audio/#preemptive-generation
         preemptive_generation=True,
     )
 
-    # To use a realtime model instead of a voice pipeline, use the following session setup instead.
-    # (Note: This is for the OpenAI Realtime API. For other providers, see https://docs.livekit.io/agents/models/realtime/))
-    # 1. Install livekit-agents[openai]
-    # 2. Set OPENAI_API_KEY in .env.local
-    # 3. Add `from livekit.plugins import openai` to the top of this file
-    # 4. Use the following session setup instead of the version above
-    # session = AgentSession(
-    #     llm=openai.realtime.RealtimeModel(voice="marin")
-    # )
-
-    # Metrics collection, to measure pipeline performance
-    # For more information, see https://docs.livekit.io/agents/build/metrics/
+    # Metrics
     usage_collector = metrics.UsageCollector()
 
     @session.on("metrics_collected")
@@ -156,25 +114,17 @@ async def entrypoint(ctx: JobContext):
 
     ctx.add_shutdown_callback(log_usage)
 
-    # # Add a virtual avatar to the session, if desired
-    # # For other providers, see https://docs.livekit.io/agents/models/avatar/
-    # avatar = hedra.AvatarSession(
-    #   avatar_id="...",  # See https://docs.livekit.io/agents/models/avatar/plugins/hedra
-    # )
-    # # Start the avatar and wait for it to join
-    # await avatar.start(session, room=ctx.room)
+    gm = BorderlandGameMaster()
 
-    # Start the session, which initializes the voice pipeline and warms up the models
+    # Start session with our GM, no tools needed for MVP
     await session.start(
-        agent=Assistant(),
+        agent=gm,
         room=ctx.room,
         room_input_options=RoomInputOptions(
-            # For telephony applications, use `BVCTelephony` for best results
             noise_cancellation=noise_cancellation.BVC(),
         ),
     )
 
-    # Join the room and connect to the user
     await ctx.connect()
 
 

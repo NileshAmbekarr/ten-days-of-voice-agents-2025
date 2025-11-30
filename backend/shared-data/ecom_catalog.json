@@ -1,0 +1,104 @@
+{
+  "products": [
+    {
+      "id": "mug-001",
+      "name": "Classic Stoneware Coffee Mug",
+      "description": "350ml stoneware mug, microwave safe.",
+      "price": 399,
+      "currency": "INR",
+      "category": "mug",
+      "color": "white",
+      "size": null
+    },
+    {
+      "id": "mug-002",
+      "name": "Matte Black Coffee Mug",
+      "description": "300ml matte ceramic mug with comfort handle.",
+      "price": 499,
+      "currency": "INR",
+      "category": "mug",
+      "color": "black",
+      "size": null
+    },
+    {
+      "id": "bottle-001",
+      "name": "Stainless Steel Water Bottle 1L",
+      "description": "Insulated bottle, keeps drinks cold for 12 hours.",
+      "price": 799,
+      "currency": "INR",
+      "category": "bottle",
+      "color": "silver",
+      "size": "1L"
+    },
+    {
+      "id": "bottle-002",
+      "name": "Sports Sipper Bottle 750ml",
+      "description": "Lightweight plastic sipper with flip cap.",
+      "price": 349,
+      "currency": "INR",
+      "category": "bottle",
+      "color": "blue",
+      "size": "750ml"
+    },
+    {
+      "id": "tee-001",
+      "name": "Cotton T-shirt",
+      "description": "Unisex cotton t-shirt, round neck.",
+      "price": 699,
+      "currency": "INR",
+      "category": "tshirt",
+      "color": "black",
+      "size": "M"
+    },
+    {
+      "id": "tee-002",
+      "name": "Cotton T-shirt",
+      "description": "Unisex cotton t-shirt, round neck.",
+      "price": 699,
+      "currency": "INR",
+      "category": "tshirt",
+      "color": "white",
+      "size": "L"
+    },
+    {
+      "id": "hoodie-001",
+      "name": "Fleece Hoodie",
+      "description": "Warm fleece hoodie with front pocket.",
+      "price": 1299,
+      "currency": "INR",
+      "category": "hoodie",
+      "color": "black",
+      "size": "M"
+    },
+    {
+      "id": "hoodie-002",
+      "name": "Fleece Hoodie",
+      "description": "Warm fleece hoodie with front pocket.",
+      "price": 1299,
+      "currency": "INR",
+      "category": "hoodie",
+      "color": "grey",
+      "size": "L"
+    },
+    {
+      "id": "cable-001",
+      "name": "USB-C Charging Cable 1m",
+      "description": "Fast charging USB-C to USB-A cable.",
+      "price": 299,
+      "currency": "INR",
+      "category": "accessory",
+      "color": "white",
+      "size": "1m"
+    },
+    {
+      "id": "cable-002",
+      "name": "USB-C Charging Cable 2m",
+      "description": "Fast charging USB-C to USB-A cable, extra length.",
+      "price": 399,
+      "currency": "INR",
+      "category": "accessory",
+      "color": "black",
+      "size": "2m"
+    }
+  ]
+}

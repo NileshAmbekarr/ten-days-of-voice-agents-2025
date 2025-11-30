@@ -1,8 +1,11 @@
 import logging
-from datetime import datetime
 import json
 import os
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+
 from dotenv import load_dotenv
+from pydantic import BaseModel
 from livekit.agents import (
     Agent,
     AgentSession,
@@ -15,7 +18,7 @@ from livekit.agents import (
     metrics,
     tokenize,
     function_tool,
-    RunContext
+    RunContext,
 )
 from livekit.plugins import murf, silero, google, deepgram, noise_cancellation
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
@@ -24,157 +27,210 @@ logger = logging.getLogger("agent")
 
 load_dotenv(".env.local")
 
-order_state = {
-    "drinkType": None,
-    "size": None,
-    "milk": None,
-    "extras": [],
-    "name": None,
-}
+# -----------------------------
+# DATA LOADERS
+# -----------------------------
 
-class Assistant(Agent):
-    def __init__(self) -> None:
-        super().__init__(instructions="""
-                You are a friendly coffee shop barista for Blue Tokai Coffee.
+CATALOG_PATHS = [
+    os.path.join("..", "shared-data", "ecom_catalog.json"),
+    os.path.join("shared-data", "ecom_catalog.json"),
+    "shared-data/ecom_catalog.json",
+]
 
-                Your goal is to take a coffee order by filling the following JSON object:
-                {
-                "drinkType": "string",
-                "size": "string",
-                "milk": "string",
-                "extras": ["string"],
-                "name": "string"
-                }
+PRODUCTS: List[Dict[str, Any]] = []
+ORDERS: List[Dict[str, Any]] = []
 
-                Ask clarifying questions until ALL fields are filled.
-                Ask only one question at a time.
+ORDERS_DIR = "orders"
+ORDERS_FILE = os.path.join(ORDERS_DIR, "ecom_orders.json")
 
-                When all fields are filled, call the tool `save_order` with the full JSON object.
-                Then speak a friendly confirmation message summarizing the order loudly and clearly.
-                """,
+
+def load_catalog() -> None:
+    global PRODUCTS
+    for path in CATALOG_PATHS:
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+            PRODUCTS = raw.get("products", [])
+            logger.info(f"Loaded catalog successfully with {len(PRODUCTS)} products")
+            return
+
+    logger.warning("Could not find catalog file. Starting with empty list.")
+    PRODUCTS = []
+
+
+load_catalog()
+
+
+def filter_products(category=None, max_price=None, color=None, name_query=None):
+    results = PRODUCTS
+    if category:
+        results = [p for p in results if p.get("category", "").lower() == category.lower()]
+    if max_price:
+        results = [p for p in results if p.get("price", 9999999) <= max_price]
+    if color:
+        results = [p for p in results if p.get("color", "").lower() == color.lower()]
+    if name_query:
+        q = name_query.lower()
+        results = [p for p in results if q in p["name"].lower() or q in p.get("description", "").lower()]
+    return results
+
+
+def find_product_by_id(pid: str):
+    for p in PRODUCTS:
+        if p["id"] == pid:
+            return p
+    return None
+
+
+def persist_orders() -> None:
+    os.makedirs(ORDERS_DIR, exist_ok=True)
+    with open(ORDERS_FILE, "w", encoding="utf-8") as f:
+        json.dump(ORDERS, f, indent=2)
+
+
+# -----------------------------
+# Pydantic argument models
+# -----------------------------
+
+class SearchArgs(BaseModel):
+    category: Optional[str] = None
+    max_price: Optional[int] = None
+    color: Optional[str] = None
+    name_query: Optional[str] = None
+
+
+class OrderArgs(BaseModel):
+    product_id: str
+    quantity: Optional[int] = 1
+
+
+# -----------------------------
+# ASSISTANT IMPLEMENTATION
+# -----------------------------
+
+class EcommerceAssistant(Agent):
+    def __init__(self):
+        super().__init__(
+            instructions="""
+You are a friendly voice shopping assistant.
+You help users explore items like mugs, t-shirts, hoodies, bottles and accessories.
+Your job is to:
+- Understand what they want to browse.
+- Call the search tool when they ask for products.
+- Summarize up to 3 items with name + price.
+- Allow references like 'the second hoodie' or 'the black one'.
+- Help them place orders using the order tool.
+- Ask missing details clearly if required.
+- Confirm their order with totals.
+
+When the user asks to view what they previously bought, call the last order tool.
+
+Speak naturally like a helpful store assistant.
+Don't mention internal tools, JSON, IDs, or implementation details.
+If nothing matches, politely say you don’t have anything like that.
+
+Always end with a question if the conversation should continue.
+"""
         )
 
-    
-    @function_tool
-    async def update_order(self, context: RunContext, field: str, value: str):
-        """Update a specific field in the order."""
-        global order_state
-        if field == "extras":
-            order_state["extras"].append(value)
-        else:
-            order_state[field] = value
-        return "updated"
+    # ----------- TOOL: SEARCH PRODUCTS ----------
 
     @function_tool
-    async def save_order(self, context: RunContext):
-        """Save the completed order to a JSON file."""
-        os.makedirs("orders", exist_ok=True)
-        filename = f"orders/order_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        with open(filename, "w") as f:
-            json.dump(order_state, f, indent=2)
-        return f"Order saved to {filename}"
-    
+    async def search_products(self, context: RunContext, args: SearchArgs):
+        results = filter_products(
+            category=args.category,
+            max_price=args.max_price,
+            color=args.color,
+            name_query=args.name_query,
+        )
 
-    # To add tools, use the @function_tool decorator.
-    # Here's an example that adds a simple weather tool.
-    # You also have to add `from livekit.agents import function_tool, RunContext` to the top of this file
-    # @function_tool
-    # async def lookup_weather(self, context: RunContext, location: str):
-    #     """Use this tool to look up current weather information in the given location.
-    #
-    #     If the location is not supported by the weather service, the tool will indicate this. You must tell the user the location's weather is unavailable.
-    #
-    #     Args:
-    #         location: The location to look up weather information for (e.g. city name)
-    #     """
-    #
-    #     logger.info(f"Looking up weather for {location}")
-    #
-    #     return "sunny with a temperature of 70 degrees."
+        summaries = []
+        for idx, p in enumerate(results, start=1):
+            summaries.append({
+                "index": idx,
+                "id": p["id"],
+                "name": p["name"],
+                "price": p["price"],
+                "currency": p["currency"],
+                "color": p.get("color"),
+                "category": p.get("category"),
+            })
 
+        return summaries
+
+    # ----------- TOOL: CREATE ORDER ----------
+
+    @function_tool
+    async def create_order(self, context: RunContext, args: OrderArgs):
+        global ORDERS
+        product = find_product_by_id(args.product_id)
+        if not product:
+            return {"message": "not_found"}
+
+        quantity = args.quantity or 1
+        total = quantity * product["price"]
+        order_id = len(ORDERS) + 1
+
+        order = {
+            "id": order_id,
+            "created_at": datetime.now().isoformat(),
+            "items": [
+                {
+                    "product_id": product["id"],
+                    "name": product["name"],
+                    "quantity": quantity,
+                    "unit_price": product["price"],
+                    "total": total
+                }
+            ],
+            "total": total,
+            "currency": product["currency"],
+        }
+
+        ORDERS.append(order)
+        persist_orders()
+        return order
+
+    # ----------- TOOL: GET LAST ORDER ----------
+
+    @function_tool
+    async def get_last_order(self, context: RunContext):
+        if not ORDERS:
+            return {"message": "no_orders"}
+        return ORDERS[-1]
+
+
+# -----------------------------
+# PREWARM + ENTRYPOINT
+# -----------------------------
 
 def prewarm(proc: JobProcess):
     proc.userdata["vad"] = silero.VAD.load()
 
 
 async def entrypoint(ctx: JobContext):
-    # Logging setup
-    # Add any other context you want in all log entries here
-    ctx.log_context_fields = {
-        "room": ctx.room.name,
-    }
-
-    # Set up a voice AI pipeline using OpenAI, Cartesia, AssemblyAI, and the LiveKit turn detector
     session = AgentSession(
-        # Speech-to-text (STT) is your agent's ears, turning the user's speech into text that the LLM can understand
-        # See all available models at https://docs.livekit.io/agents/models/stt/
         stt=deepgram.STT(model="nova-3"),
-        # A Large Language Model (LLM) is your agent's brain, processing user input and generating a response
-        # See all available models at https://docs.livekit.io/agents/models/llm/
-        llm=google.LLM(
-                model="gemini-2.5-flash",
-            ),
-        # Text-to-speech (TTS) is your agent's voice, turning the LLM's text into speech that the user can hear
-        # See all available models as well as voice selections at https://docs.livekit.io/agents/models/tts/
+        llm=google.LLM(model="gemini-2.5-flash"),
         tts=murf.TTS(
-                voice="en-US-matthew", 
-                style="Conversation",
-                tokenizer=tokenize.basic.SentenceTokenizer(min_sentence_len=2),
-                text_pacing=True
-            ),
-        # VAD and turn detection are used to determine when the user is speaking and when the agent should respond
-        # See more at https://docs.livekit.io/agents/build/turns
+            voice="en-US-matthew",
+            style="Conversation",
+            tokenizer=tokenize.basic.SentenceTokenizer(min_sentence_len=2),
+            text_pacing=True,
+        ),
         turn_detection=MultilingualModel(),
         vad=ctx.proc.userdata["vad"],
-        # allow the LLM to generate a response while waiting for the end of turn
-        # See more at https://docs.livekit.io/agents/build/audio/#preemptive-generation
         preemptive_generation=True,
     )
 
-    # To use a realtime model instead of a voice pipeline, use the following session setup instead.
-    # (Note: This is for the OpenAI Realtime API. For other providers, see https://docs.livekit.io/agents/models/realtime/))
-    # 1. Install livekit-agents[openai]
-    # 2. Set OPENAI_API_KEY in .env.local
-    # 3. Add `from livekit.plugins import openai` to the top of this file
-    # 4. Use the following session setup instead of the version above
-    # session = AgentSession(
-    #     llm=openai.realtime.RealtimeModel(voice="marin")
-    # )
+    assistant = EcommerceAssistant()
 
-    # Metrics collection, to measure pipeline performance
-    # For more information, see https://docs.livekit.io/agents/build/metrics/
-    usage_collector = metrics.UsageCollector()
-
-    @session.on("metrics_collected")
-    def _on_metrics_collected(ev: MetricsCollectedEvent):
-        metrics.log_metrics(ev.metrics)
-        usage_collector.collect(ev.metrics)
-
-    async def log_usage():
-        summary = usage_collector.get_summary()
-        logger.info(f"Usage: {summary}")
-
-    ctx.add_shutdown_callback(log_usage)
-
-    # # Add a virtual avatar to the session, if desired
-    # # For other providers, see https://docs.livekit.io/agents/models/avatar/
-    # avatar = hedra.AvatarSession(
-    #   avatar_id="...",  # See https://docs.livekit.io/agents/models/avatar/plugins/hedra
-    # )
-    # # Start the avatar and wait for it to join
-    # await avatar.start(session, room=ctx.room)
-
-    # Start the session, which initializes the voice pipeline and warms up the models
     await session.start(
-        agent=Assistant(),
+        agent=assistant,
         room=ctx.room,
-        room_input_options=RoomInputOptions(
-            # For telephony applications, use `BVCTelephony` for best results
-            noise_cancellation=noise_cancellation.BVC(),
-        ),
+        room_input_options=RoomInputOptions(noise_cancellation=noise_cancellation.BVC()),
     )
 
-    # Join the room and connect to the user
     await ctx.connect()
 
 
